@@ -23,7 +23,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+	  FDCAN_RxHeaderTypeDef RxHeader;
+	  uint8_t RxData[8];
+  	  uint8_t current_state;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +35,18 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+void HAL_FDCAN_RxFifo0MsgPendingCallback(FDCAN_HandleTypeDef *hfdcan){
+	  if(hfdcan->Instance==FDCAN1) {
+		  if(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+		      {
+			  	if(RxHeader.Identifier==0x1)
+			  	  PPP_enable=RxData[0];
+			  	  current_state=RxData[1];
+			  	if(RxHeader.Identifier==0x018DAF103)
+			  		current_state++;
+		      }
+	  }
+}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -65,6 +78,16 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+uint8_t TX_TPU_Buffer[6] = {0};
+uint8_t RX_TPU_Buffer[6] = {0};
+
+float BatteryVoltage = 0;
+uint8_t synced = 0;
+uint8_t PPP_enable = 1;
+
+volatile uint16_t VoltTX;
+
+uint32_t timer;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -97,6 +120,7 @@ static void MX_RTC_Init(void);
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -135,12 +159,116 @@ int main(void)
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
 
+  	  uint8_t crc = 0;
+
+	  FDCAN_FilterTypeDef sFilterConfig;
+	  FDCAN_TxHeaderTypeDef TxHeader;
+
+	  uint8_t TxData[8];
+
+
+	  sFilterConfig.IdType = FDCAN_EXTENDED_ID;   // Standard 11-bit ID (Use FDCAN_EXTENDED_ID for 29-bit)
+	  sFilterConfig.FilterIndex = 0;              // Filter 0
+	  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+	  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+	  sFilterConfig.FilterID1 = 0x000;            // Accept all IDs (mask = 0x000)
+	  sFilterConfig.FilterID2 = 0x000;            // Mask (0x000 means accept all)
+	  HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig);
+	  HAL_FDCAN_Start(&hfdcan1);
+	  HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+	  switch (current_state){
+	  case 0:
+		  break;
+	  case 1:
+		  TxData[0]=0x02;
+		  TxData[1]=0x10;
+		  TxData[2]=0x03;
+		  TxData[3]=0x00;
+		  TxData[4]=0x00;
+		  TxData[5]=0x00;
+		  TxData[6]=0x00;
+		  TxData[7]=0x00;
+		  HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData);
+		  break;
+	  case 2:
+		  TxData[0]=0x02;
+		  TxData[1]=0x27;
+		  TxData[2]=0x05;
+		  TxData[3]=0x00;
+		  TxData[4]=0x00;
+		  TxData[5]=0x00;
+		  TxData[6]=0x00;
+		  TxData[7]=0x00;
+		  HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData);
+		  break;
+	  }
+
+
+	  	  	  if (HAL_GetTick()-timer>20000){
+	  	  		  timer=HAL_GetTick();
+	  	  		  if (PPP_enable==0) PPP_enable=1;
+	  	  		  else PPP_enable=0;
+	  	  	  }
+	  	  	  uint8_t tmp = 0;
+	          uint8_t currentByte = 0;
+
+	          if (!synced)
+	          {
+	              do {
+	                  HAL_UART_Receive(&huart2, &tmp, 1, 10);
+	              } while (tmp != 0xE6);
+	              HAL_UART_Transmit(&huart2, &TX_TPU_Buffer[0], 1, HAL_MAX_DELAY);
+	              TX_TPU_Buffer[0] = tmp;
+	              currentByte = 1;
+	          }
+	          else
+	          {
+	              currentByte = 0;
+	          }
+
+	          for (uint8_t i = currentByte; i < 6; i++)
+	          {
+	              HAL_UART_Receive(&huart2, &RX_TPU_Buffer[i], 1, HAL_MAX_DELAY);
+	              HAL_UART_Transmit(&huart2, &TX_TPU_Buffer[i], 1, HAL_MAX_DELAY);
+	              TX_TPU_Buffer[i] = RX_TPU_Buffer[i];
+	          }
+
+//	          uint16_t VoltRX = (((uint16_t) RX_TPU_Buffer[1] << 8) | RX_TPU_Buffer[2]) & 0xFF70;
+
+	          synced++;
+	          if (synced == 4)
+	              synced = 0;
+
+	          if (PPP_enable){
+	              BatteryVoltage = 85.0f;
+	          	  HAL_GPIO_WritePin(uC_PPP_En_GPIO_Port,uC_PPP_En_Pin,1);
+	          }
+	          else {
+	              BatteryVoltage = 115.0f;
+          	  	  HAL_GPIO_WritePin(uC_PPP_En_GPIO_Port,uC_PPP_En_Pin,0);
+	          }
+	          VoltTX = (uint16_t)((BatteryVoltage - 9.55f) / 0.00802f);
+	          VoltTX &= 0xFF70;
+	          // Encode voltage back
+	          TX_TPU_Buffer[1] = (VoltTX >> 8) & 0xFF;
+	          TX_TPU_Buffer[2] = VoltTX & 0xFF;
+	          // Checksum
+	          crc = 0;
+	          for (int i = 0; i < 5; i++)
+	          {
+	              crc += TX_TPU_Buffer[i];
+	          }
+	          crc = (~crc + 1) & 0x7F;
+	          TX_TPU_Buffer[5] = crc;
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -276,8 +404,8 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.ProtocolException = DISABLE;
   hfdcan1.Init.NominalPrescaler = 16;
   hfdcan1.Init.NominalSyncJumpWidth = 1;
-  hfdcan1.Init.NominalTimeSeg1 = 2;
-  hfdcan1.Init.NominalTimeSeg2 = 2;
+  hfdcan1.Init.NominalTimeSeg1 = 1;
+  hfdcan1.Init.NominalTimeSeg2 = 1;
   hfdcan1.Init.DataPrescaler = 1;
   hfdcan1.Init.DataSyncJumpWidth = 1;
   hfdcan1.Init.DataTimeSeg1 = 1;
@@ -329,8 +457,8 @@ static void MX_FDCAN2_Init(void)
   hfdcan2.Init.ProtocolException = DISABLE;
   hfdcan2.Init.NominalPrescaler = 16;
   hfdcan2.Init.NominalSyncJumpWidth = 1;
-  hfdcan2.Init.NominalTimeSeg1 = 2;
-  hfdcan2.Init.NominalTimeSeg2 = 2;
+  hfdcan2.Init.NominalTimeSeg1 = 1;
+  hfdcan2.Init.NominalTimeSeg2 = 1;
   hfdcan2.Init.DataPrescaler = 1;
   hfdcan2.Init.DataSyncJumpWidth = 1;
   hfdcan2.Init.DataTimeSeg1 = 1;
@@ -382,8 +510,8 @@ static void MX_FDCAN3_Init(void)
   hfdcan3.Init.ProtocolException = DISABLE;
   hfdcan3.Init.NominalPrescaler = 16;
   hfdcan3.Init.NominalSyncJumpWidth = 1;
-  hfdcan3.Init.NominalTimeSeg1 = 2;
-  hfdcan3.Init.NominalTimeSeg2 = 2;
+  hfdcan3.Init.NominalTimeSeg1 = 1;
+  hfdcan3.Init.NominalTimeSeg2 = 1;
   hfdcan3.Init.DataPrescaler = 1;
   hfdcan3.Init.DataSyncJumpWidth = 1;
   hfdcan3.Init.DataTimeSeg1 = 1;
@@ -753,14 +881,14 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.BaudRate = 20800;
+  huart2.Init.WordLength = UART_WORDLENGTH_9B;
   huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Parity = UART_PARITY_EVEN;
   huart2.Init.Mode = UART_MODE_TX_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_8;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_ENABLE;
   huart2.Init.ClockPrescaler = UART_PRESCALER_DIV1;
   huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
   if (HAL_UART_Init(&huart2) != HAL_OK)
@@ -775,7 +903,7 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_UARTEx_DisableFifoMode(&huart2) != HAL_OK)
+  if (HAL_UARTEx_EnableFifoMode(&huart2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -811,7 +939,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(SPI2_NSS_GPIO_Port, SPI2_NSS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(uC_Trigger_GPIO_Port, uC_Trigger_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, uC_Trigger_Pin|uC_PPP_En_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
@@ -844,18 +972,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF0_MCO;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : uC_Trigger_Pin */
-  GPIO_InitStruct.Pin = uC_Trigger_Pin;
+  /*Configure GPIO pins : uC_Trigger_Pin uC_PPP_En_Pin */
+  GPIO_InitStruct.Pin = uC_Trigger_Pin|uC_PPP_En_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(uC_Trigger_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : uC_PPP_En_Pin */
-  GPIO_InitStruct.Pin = uC_PPP_En_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(uC_PPP_En_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SD_Switch_Pin */
   GPIO_InitStruct.Pin = SD_Switch_Pin;
