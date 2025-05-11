@@ -23,10 +23,15 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "security.h"
 FDCAN_RxHeaderTypeDef RxHeader;
 uint8_t RxData[8];
 uint8_t current_state;
 uint8_t PPP_enable = 1;
+
+FDCAN_TxHeaderTypeDef g_TxHeader;
+uint8_t g_TxData[8];
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -37,15 +42,27 @@ uint8_t PPP_enable = 1;
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 void HAL_FDCAN_RxFifo0MsgPendingCallback(FDCAN_HandleTypeDef *hfdcan) {
+	if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData)
+			== HAL_OK) {
+	};
 	if (hfdcan->Instance == FDCAN1) {
-		if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData)
-				== HAL_OK) {
-			if (RxHeader.Identifier == 0x1) {
-				PPP_enable = RxData[0];
-				current_state = RxData[1];
-			}
-			if (RxHeader.Identifier == 0x018DAF103)
-				current_state++;
+		if (RxHeader.Identifier == 0x1) {
+			PPP_enable = RxData[0];
+			current_state = RxData[1];
+		}
+		if (RxHeader.Identifier == 0x018DAF103)
+			current_state++;
+	} else {
+		g_TxHeader.DataLength = RxHeader.DataLength;
+		g_TxHeader.FDFormat = RxHeader.FDFormat;
+		g_TxHeader.Identifier = RxHeader.Identifier;
+		g_TxHeader.TxFrameType = RxHeader.RxFrameType;
+		g_TxHeader.IdType = RxHeader.IdType;
+		memcpy(g_TxData, RxData, 8);
+		if (hfdcan->Instance == FDCAN2) {
+			HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &g_TxHeader, g_TxData);
+		} else {
+			HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &g_TxHeader, g_TxData);
 		}
 	}
 }
@@ -163,7 +180,6 @@ int main(void)
 
 	FDCAN_FilterTypeDef sFilterConfig;
 	FDCAN_TxHeaderTypeDef TxHeader;
-
 	uint8_t TxData[8];
 
 	sFilterConfig.IdType = FDCAN_EXTENDED_ID; // Standard 11-bit ID (Use FDCAN_EXTENDED_ID for 29-bit)

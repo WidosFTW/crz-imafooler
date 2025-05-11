@@ -41,7 +41,11 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-
+extern SPI_HandleTypeDef hspi4;
+extern TIM_HandleTypeDef htim1;
+extern FDCAN_HandleTypeDef hfdcan1;
+extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
