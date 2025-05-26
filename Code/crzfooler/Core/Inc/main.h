@@ -46,6 +46,8 @@ extern TIM_HandleTypeDef htim1;
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_HandleTypeDef hfdcan2;
 extern FDCAN_HandleTypeDef hfdcan3;
+extern UART_HandleTypeDef huart2;
+extern uint8_t PPP_enable;
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
@@ -81,7 +83,9 @@ void Error_Handler(void);
 #define SPI1_CS_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
-
+#define SoC_High 	0x04
+#define SoC_Low 	0x01
+#define SoC_Middle	0x02
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
